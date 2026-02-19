@@ -1,9 +1,9 @@
 """
-Training script for ViT-based AI-Generated Image Detection.
+Training script for CLIP-based AI-Generated Image Detection.
 
 Usage:
-    python train.py                    # Full fine-tuning
-    python train.py --freeze           # Frozen backbone (faster, for testing)
+    python train.py                    # Fine-tune: frozen CLIP backbone, train head only
+    python train.py --no-freeze        # Full training: unfreeze all backbone params
     python train.py --epochs 5         # Override num epochs
     python train.py --resume checkpoint.pth  # Resume from checkpoint
 """
@@ -277,10 +277,15 @@ def train(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train ViT for AI Image Detection")
+    # Fine-tuning mode: freeze the 83M-parameter ViT backbone and only
+    # train the small classification head (~3K params). This is the
+    # recommended default — faster training and less risk of overfitting.
+    # Pass --no-freeze to unfreeze the full backbone for end-to-end training.
     parser.add_argument(
-        "--freeze", action="store_true",
-        help="Freeze ViT backbone, only train classification head",
+        "--no-freeze", dest="freeze", action="store_false",
+        help="Unfreeze full ViT backbone (trains all 83M params — needs more data & compute)",
     )
+    parser.set_defaults(freeze=True)  # Fine-tuning is the default
     parser.add_argument(
         "--epochs", type=int, default=NUM_EPOCHS,
         help=f"Number of training epochs (default: {NUM_EPOCHS})",

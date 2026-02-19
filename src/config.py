@@ -1,5 +1,5 @@
 """
-Configuration for AI-Generated Image Detection (ViT Fine-tuning)
+Configuration for AI-Generated Image Detection (CLIP Fine-tuning)
 All hyperparameters, paths, and settings in one place.
 """
 
@@ -19,7 +19,7 @@ TEST_DIR = os.path.join(DATA_DIR, "test")
 
 # Output paths
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "outputs")
-MODEL_SAVE_PATH = os.path.join(OUTPUT_DIR, "best_model.pth")
+MODEL_SAVE_PATH = os.path.join(OUTPUT_DIR, "best_model_clip.pth")
 LOGS_DIR = os.path.join(OUTPUT_DIR, "logs")
 PLOTS_DIR = os.path.join(OUTPUT_DIR, "plots")
 
@@ -29,21 +29,23 @@ PLOTS_DIR = os.path.join(OUTPUT_DIR, "plots")
 # Kaggle dataset identifier
 KAGGLE_DATASET = "birdy654/cifake-real-and-ai-generated-synthetic-images"
 
-# Class labels
-CLASSES = ["REAL", "FAKE"]
+# Class labels — must match ImageFolder's alphabetical ordering (FAKE < REAL)
+CLASSES = ["FAKE", "REAL"]
 NUM_CLASSES = len(CLASSES)
 
 # Class-to-index mapping
-CLASS_TO_IDX = {"REAL": 0, "FAKE": 1}
-IDX_TO_CLASS = {0: "REAL", 1: "FAKE"}
+CLASS_TO_IDX = {"FAKE": 0, "REAL": 1}
+IDX_TO_CLASS = {0: "FAKE", 1: "REAL"}
 
 # =============================================================================
 # MODEL
 # =============================================================================
-# Pre-trained ViT model from Hugging Face
-MODEL_NAME = "google/vit-base-patch16-224-in21k"
+# CLIP vision encoder — trained on 400M image-text pairs (OpenAI)
+# Patch16 gives finer-grained features than Patch32, better for CIFAKE's
+# low-resolution upscaled images.
+MODEL_NAME = "openai/clip-vit-base-patch16"
 
-# Image size expected by ViT-B/16
+# Image size expected by CLIP ViT-B/16
 IMAGE_SIZE = 224
 
 # =============================================================================
@@ -51,7 +53,7 @@ IMAGE_SIZE = 224
 # =============================================================================
 BATCH_SIZE = 32
 NUM_EPOCHS = 10
-LEARNING_RATE = 2e-5           # Low LR for fine-tuning pre-trained model
+LEARNING_RATE = 1e-4           # Slightly higher LR — only the small head is trained
 WEIGHT_DECAY = 0.01            # AdamW regularization
 WARMUP_STEPS = 500             # Learning rate warmup
 

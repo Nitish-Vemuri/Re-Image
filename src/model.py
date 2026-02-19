@@ -1,57 +1,92 @@
 """
-Vision Transformer (ViT) model for AI-Generated Image Detection.
+CLIP-based model for AI-Generated Image Detection.
 
 Architecture:
-    Pre-trained ViT-B/16 (google/vit-base-patch16-224-in21k)
+    Pre-trained CLIP Vision Encoder (openai/clip-vit-base-patch16)
         ↓
-    Replace classification head (1000 → 2 classes)
+    Pooled [CLS] token features (768-dim)
         ↓
-    Output: [FAKE, REAL] logits
+    Linear classification head (768 → 2 classes)
+        ↓
+    Output: [REAL, FAKE] logits
 
-The pre-trained ViT was trained on ImageNet-21K (14M images, 21K classes).
-We fine-tune it for binary classification: Real vs AI-Generated.
+CLIP was trained on 400M image-text pairs — it has a rich understanding
+of natural image structure, making it strong at spotting AI artifacts.
+
+We fine-tune only the linear head by default (freeze_backbone=True):
+    - Trainable params: ~1,538  (just the head)
+    - Frozen params:    ~86M    (CLIP vision encoder)
 """
+
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
-from transformers import ViTForImageClassification, ViTConfig
+from transformers import CLIPVisionModel
 
 from config import DEVICE, MODEL_NAME, NUM_CLASSES
 
 
-def create_model(freeze_backbone=False):
+@dataclass
+class ModelOutput:
+    """Simple output wrapper so train/inference code can use .logits as before."""
+    logits: torch.Tensor
+
+
+class CLIPClassifier(nn.Module):
     """
-    Load pre-trained ViT and replace the classification head.
+    CLIP Vision Encoder + linear classification head.
+
+    The CLIP encoder extracts a 768-dim pooled representation per image.
+    A single linear layer maps that to NUM_CLASSES (2: REAL / FAKE).
+    """
+
+    def __init__(self, freeze_backbone=True):
+        super().__init__()
+
+        # Load pre-trained CLIP vision encoder (no text encoder needed)
+        self.vision_model = CLIPVisionModel.from_pretrained(MODEL_NAME)
+        hidden_size = self.vision_model.config.hidden_size  # 768 for base-patch16
+
+        # Classification head: 768 → 2
+        self.classifier = nn.Linear(hidden_size, NUM_CLASSES)
+
+        if freeze_backbone:
+            # Freeze the entire CLIP encoder; only train the linear head
+            for param in self.vision_model.parameters():
+                param.requires_grad = False
+            print("Backbone frozen — only training classification head.")
+
+    def forward(self, pixel_values):
+        # Extract visual features from CLIP encoder
+        vision_outputs = self.vision_model(pixel_values=pixel_values)
+
+        # pooler_output: [CLS] token → shape [batch, 768]
+        pooled = vision_outputs.pooler_output
+
+        # Map to class scores
+        logits = self.classifier(pooled)
+
+        return ModelOutput(logits=logits)
+
+
+def create_model(freeze_backbone=True):
+    """
+    Create a CLIP-based classifier for REAL vs FAKE image detection.
 
     Args:
-        freeze_backbone: If True, freeze all ViT layers except the
-            classification head. Useful for:
-            - Quick experiments (trains much faster)
-            - Small datasets (prevents overfitting)
-            Set to False for best accuracy (fine-tune everything).
+        freeze_backbone: If True (default), freeze the CLIP vision encoder
+            and only train the linear head (~1.5K params).
+            Set to False to unfreeze all ~86M params for full fine-tuning.
 
     Returns:
-        model: ViTForImageClassification with 2-class head, on DEVICE.
+        model: CLIPClassifier on DEVICE.
     """
-    print(f"Loading pre-trained model: {MODEL_NAME}")
+    print(f"Loading pre-trained CLIP model: {MODEL_NAME}")
 
-    # Load ViT with a new 2-class classification head
-    model = ViTForImageClassification.from_pretrained(
-        MODEL_NAME,
-        num_labels=NUM_CLASSES,
-        ignore_mismatched_sizes=True,  # Head size changes from 21K → 2
-    )
-
-    if freeze_backbone:
-        # Freeze all parameters except the classification head
-        for name, param in model.named_parameters():
-            if "classifier" not in name:
-                param.requires_grad = False
-        print("Backbone frozen — only training classification head.")
-
+    model = CLIPClassifier(freeze_backbone=freeze_backbone)
     model = model.to(DEVICE)
 
-    # Print model summary
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total parameters:     {total_params:,}")
@@ -63,7 +98,7 @@ def create_model(freeze_backbone=False):
 
 def load_model(checkpoint_path):
     """
-    Load a trained model from a checkpoint file.
+    Load a trained CLIPClassifier from a checkpoint file.
 
     Args:
         checkpoint_path: Path to the saved .pth file.
@@ -73,17 +108,11 @@ def load_model(checkpoint_path):
     """
     print(f"Loading model from: {checkpoint_path}")
 
-    # Create model architecture
-    model = ViTForImageClassification.from_pretrained(
-        MODEL_NAME,
-        num_labels=NUM_CLASSES,
-        ignore_mismatched_sizes=True,
-    )
+    # Re-create the model architecture (backbone + head)
+    model = CLIPClassifier(freeze_backbone=False)  # unfreeze so all weights load
 
-    # Load trained weights
     checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
 
-    # Handle both full checkpoint dict and raw state_dict
     if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
         model.load_state_dict(checkpoint["model_state_dict"])
         print(f"Loaded from epoch {checkpoint.get('epoch', '?')}, "
@@ -102,28 +131,16 @@ def load_model(checkpoint_path):
 # MAIN (for standalone testing)
 # =============================================================================
 if __name__ == "__main__":
-    # Test 1: Create model (full fine-tuning)
     print("=" * 50)
-    print("Test 1: Full fine-tuning model")
+    print("Test: CLIP Classifier (frozen backbone)")
     print("=" * 50)
-    model = create_model(freeze_backbone=False)
+    model = create_model(freeze_backbone=True)
 
-    # Test 2: Create model (frozen backbone)
-    print("\n" + "=" * 50)
-    print("Test 2: Frozen backbone model")
-    print("=" * 50)
-    model_frozen = create_model(freeze_backbone=True)
-
-    # Test 3: Forward pass with dummy input
-    print("\n" + "=" * 50)
-    print("Test 3: Forward pass")
-    print("=" * 50)
-    dummy_input = torch.randn(4, 3, 224, 224).to(DEVICE)  # Batch of 4 images
+    # Forward pass with dummy input
+    dummy_input = torch.randn(4, 3, 224, 224).to(DEVICE)
     with torch.no_grad():
         outputs = model(pixel_values=dummy_input)
-    logits = outputs.logits
-    probs = torch.softmax(logits, dim=1)
-    print(f"Input shape:  {dummy_input.shape}")
-    print(f"Output shape: {logits.shape}")     # Expected: [4, 2]
-    print(f"Probabilities:\n{probs}")
-    print(f"Predictions:  {torch.argmax(probs, dim=1)}")  # 0=FAKE, 1=REAL
+    probs = torch.softmax(outputs.logits, dim=1)
+    print(f"\nInput shape:  {dummy_input.shape}")
+    print(f"Output shape: {outputs.logits.shape}")   # Expected: [4, 2]
+    print(f"Predictions:  {torch.argmax(probs, dim=1)}")  # 0=REAL, 1=FAKE

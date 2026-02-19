@@ -143,12 +143,13 @@ def get_train_transforms():
             )
         )
 
-    # Convert to tensor and normalize (ImageNet stats, standard for ViT)
+    # Convert to tensor and normalize using CLIP's own mean/std
+    # (different from ImageNet — CLIP was trained on web-scraped image-text pairs)
     transform_list.extend([
         transforms.ToTensor(),
         transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
+            mean=[0.48145466, 0.4578275, 0.40821073],
+            std=[0.26862954, 0.26130258, 0.27577711],
         ),
     ])
 
@@ -164,8 +165,8 @@ def get_eval_transforms():
         transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
         transforms.ToTensor(),
         transforms.Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225],
+            mean=[0.48145466, 0.4578275, 0.40821073],
+            std=[0.26862954, 0.26130258, 0.27577711],
         ),
     ])
 
